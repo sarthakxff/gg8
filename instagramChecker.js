@@ -21,7 +21,7 @@ const PROXY_URL     = process.env.PROXY_URL     || null;  // e.g. http://user:pa
 
 // How many consecutive identical results before we trust a status change.
 // 3 is the sweet spot: eliminates transient errors without being too slow.
-const CONFIRMATION_NEEDED = 3;
+const CONFIRMATION_NEEDED = 2;
 
 const STATUS = {
   BANNED:       "BANNED",
