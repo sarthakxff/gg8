@@ -5,11 +5,6 @@
  *   1. RapidAPI  → Most reliable from datacenter IPs (Railway).
  *   2. HTML scrape via residential proxy (PROXY_URL) if set.
  *   3. Direct HTML scrape fallback (last resort, often blocked on Railway).
- *
- * Confirmation system:
- *   Every status change requires CONFIRMATION_NEEDED consecutive
- *   matching results before being reported as real. This eliminates
- *   false positives caused by Instagram returning ambiguous pages.
  */
 
 const axios = require("axios");
@@ -17,10 +12,8 @@ const axios = require("axios");
 // ── Constants ──────────────────────────────────────────────────────────────
 const RAPIDAPI_KEY  = process.env.RAPIDAPI_KEY  || null;
 const RAPIDAPI_HOST = "instagram-scraper-stable-api.p.rapidapi.com";
-const PROXY_URL     = process.env.PROXY_URL     || null;  // e.g. http://user:pass@host:port
+const PROXY_URL     = process.env.PROXY_URL     || null;
 
-// How many consecutive identical results before we trust a status change.
-// 3 is the sweet spot: eliminates transient errors without being too slow.
 const CONFIRMATION_NEEDED = 2;
 
 const STATUS = {
@@ -30,11 +23,8 @@ const STATUS = {
   ERROR:        "ERROR",
 };
 
-// ── In-memory confirmation tracker ────────────────────────────────────────
-// Shape: { username: { pendingStatus, count, lastProfile } }
 const confirmationTracker = {};
 
-// ── User-agent rotation ────────────────────────────────────────────────────
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
@@ -45,13 +35,11 @@ const USER_AGENTS = [
 let uaIndex = 0;
 function nextUA() { return USER_AGENTS[(uaIndex++) % USER_AGENTS.length]; }
 
-// ── Jitter: baseMs ± 20%, always positive ─────────────────────────────────
 function jitter(baseMs) {
   const variance = Math.floor(baseMs * 0.2);
   return Math.max(5000, baseMs + Math.floor(Math.random() * variance * 2) - variance);
 }
 
-// ── Number formatters ──────────────────────────────────────────────────────
 function formatCount(n) {
   if (n === null || n === undefined) return "N/A";
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
@@ -68,30 +56,27 @@ function parseAbbreviated(str) {
   return parseInt(clean, 10) || null;
 }
 
-// ── Profile extraction from HTML ──────────────────────────────────────────
 function extractProfileFromHTML(html, username) {
   const stats = {
     followers: null, following: null, posts: null,
     displayName: null, profilePicUrl: null, isPrivate: false,
   };
   try {
-    // Method 1: window._sharedData
     const sharedMatch = html.match(/window\._sharedData\s*=\s*(\{.+?\});<\/script>/s);
     if (sharedMatch) {
       const json = JSON.parse(sharedMatch[1]);
-      const user = json?.entry_data?.ProfilePage?.[0]?.graphql?.user;
+      const user = json && json.entry_data && json.entry_data.ProfilePage && json.entry_data.ProfilePage[0] && json.entry_data.ProfilePage[0].graphql && json.entry_data.ProfilePage[0].graphql.user;
       if (user) {
-        stats.followers    = user.edge_followed_by?.count ?? null;
-        stats.following    = user.edge_follow?.count ?? null;
-        stats.posts        = user.edge_owner_to_timeline_media?.count ?? null;
+        stats.followers    = user.edge_followed_by ? user.edge_followed_by.count : null;
+        stats.following    = user.edge_follow ? user.edge_follow.count : null;
+        stats.posts        = user.edge_owner_to_timeline_media ? user.edge_owner_to_timeline_media.count : null;
         stats.displayName  = user.full_name || null;
         stats.profilePicUrl = user.profile_pic_url_hd || user.profile_pic_url || null;
-        stats.isPrivate    = user.is_private ?? false;
+        stats.isPrivate    = user.is_private || false;
         return stats;
       }
     }
 
-    // Method 2: regex on newer JSON blobs
     const followersM = html.match(/"edge_followed_by":\{"count":(\d+)/);
     const followingM = html.match(/"edge_follow":\{"count":(\d+)/);
     const postsM     = html.match(/"edge_owner_to_timeline_media":\{"count":(\d+)/);
@@ -103,13 +88,12 @@ function extractProfileFromHTML(html, username) {
     if (followersM) stats.followers   = parseInt(followersM[1], 10);
     if (followingM) stats.following   = parseInt(followingM[1], 10);
     if (postsM)     stats.posts       = parseInt(postsM[1], 10);
-    if (nameM)      stats.displayName = nameM[1].replace(/\\u([\dA-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-    if (picM || picFallM) stats.profilePicUrl = (picM?.[1] || picFallM?.[1]).replace(/\\\//g, "/");
+    if (nameM)      stats.displayName = nameM[1].replace(/\\u([\dA-Fa-f]{4})/g, function(_, h) { return String.fromCharCode(parseInt(h, 16)); });
+    if (picM || picFallM) stats.profilePicUrl = (picM ? picM[1] : picFallM[1]).replace(/\\\//g, "/");
     if (privateM)   stats.isPrivate   = privateM[1] === "true";
 
     if (stats.followers !== null) return stats;
 
-    // Method 3: meta tags
     const descM = html.match(/<meta\s+name="description"\s+content="([^"]+)"/i)
                || html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
     if (descM) {
@@ -132,14 +116,12 @@ function extractProfileFromHTML(html, username) {
   return stats;
 }
 
-// ── RapidAPI check ────────────────────────────────────────────────────────
 async function checkViaRapidAPI(username) {
-  if (!RAPIDAPI_KEY) return null; // not configured
+  if (!RAPIDAPI_KEY) return null;
 
   try {
     const resp = await axios.get(
-      const resp = await axios.get(
-      `https://${RAPIDAPI_HOST}/ig_get_fb_profile_hover.php`,
+      "https://" + RAPIDAPI_HOST + "/ig_get_fb_profile_hover.php",
       {
         params: { username: username },
         headers: {
@@ -147,57 +129,54 @@ async function checkViaRapidAPI(username) {
           "X-RapidAPI-Host": RAPIDAPI_HOST,
         },
         timeout: 15000,
-        validateStatus: () => true,
+        validateStatus: function() { return true; },
       }
     );
 
-    const { status: httpStatus, data } = resp;
+    const httpStatus = resp.status;
+    const data = resp.data;
 
-    // 429 = our RapidAPI quota hit
     if (httpStatus === 429) {
       return { status: STATUS.RATE_LIMITED, detail: "RapidAPI quota reached.", profile: null };
     }
 
-    // 404 / user-not-found
-    if (httpStatus === 404 || data?.detail?.toLowerCase?.().includes("not found")) {
-      return { status: STATUS.BANNED, detail: "RapidAPI: account not found.", profile: null };
+    if (httpStatus === 404) {
+      return { status: STATUS.ERROR, detail: "RapidAPI: account not found (may be API error).", profile: null };
     }
 
-    // Some APIs return a top-level `data` key
-    const user = data?.user || data?.data || data;
+    const user = (data && data.user) || (data && data.data) || data;
 
-if (httpStatus === 200 && (user?.username || user?.id)) {
-  const profile = {
-    followers:    user.follower_count    ?? user.edge_followed_by?.count ?? null,
-    following:    user.following_count   ?? user.edge_follow?.count      ?? null,
-    posts:        user.media_count       ?? user.timeline_media_count    ?? null,
-    displayName:  user.full_name         || null,
-    profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || null,
-    isPrivate:    user.is_private        ?? false,
-  };
-      return { status: STATUS.ACCESSIBLE, detail: "RapidAPI: profile accessible.", profile };
+    if (httpStatus === 200 && user && (user.username || user.id)) {
+      const profile = {
+        followers:    user.follower_count    || (user.edge_followed_by && user.edge_followed_by.count) || null,
+        following:    user.following_count   || (user.edge_follow && user.edge_follow.count) || null,
+        posts:        user.media_count       || user.timeline_media_count || null,
+        displayName:  user.full_name         || null,
+        profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || null,
+        isPrivate:    user.is_private        || false,
+      };
+      return { status: STATUS.ACCESSIBLE, detail: "RapidAPI: profile accessible.", profile: profile };
     }
 
-    // Any other non-200 → treat as banned/unavailable
-    return { status: STATUS.BANNED, detail: `RapidAPI: HTTP ${httpStatus}.`, profile: null };
+    return { status: STATUS.BANNED, detail: "RapidAPI: HTTP " + httpStatus + ".", profile: null };
 
   } catch (err) {
     if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
       return { status: STATUS.ERROR, detail: "RapidAPI: request timed out.", profile: null };
     }
-    return null; // let caller fall through to next method
+    return null;
   }
 }
 
-// ── HTML scrape (direct or via proxy) ─────────────────────────────────────
-async function checkViaHTTP(username, useProxy = false) {
-  const url     = `https://www.instagram.com/${username}/`;
+async function checkViaHTTP(username, useProxy) {
+  if (useProxy === undefined) useProxy = false;
+  const url = "https://www.instagram.com/" + username + "/";
   const headers = {
     "User-Agent": nextUA(),
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
     "Accept-Encoding": "gzip, deflate, br",
-    Connection: "keep-alive",
+    "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
@@ -208,24 +187,24 @@ async function checkViaHTTP(username, useProxy = false) {
   const axiosConfig = {
     timeout: 15000,
     maxRedirects: 3,
-    headers,
-    validateStatus: () => true,
+    headers: headers,
+    validateStatus: function() { return true; },
   };
 
   if (useProxy && PROXY_URL) {
-    axiosConfig.proxy = false; // disable default proxy handling
-    // Use proxy via httpsAgent / http tunnel
+    axiosConfig.proxy = false;
     try {
-      const { HttpsProxyAgent } = require("https-proxy-agent");
+      const HttpsProxyAgent = require("https-proxy-agent").HttpsProxyAgent;
       axiosConfig.httpsAgent = new HttpsProxyAgent(PROXY_URL);
     } catch (_) {
-      // https-proxy-agent not installed, skip proxy
       return null;
     }
   }
 
   try {
-    const { status: httpStatus, data } = await axios.get(url, axiosConfig);
+    const resp = await axios.get(url, axiosConfig);
+    const httpStatus = resp.status;
+    const data = resp.data;
 
     if (httpStatus === 429) {
       return { status: STATUS.RATE_LIMITED, detail: "HTTP: rate limited (429).", profile: null };
@@ -245,90 +224,70 @@ async function checkViaHTTP(username, useProxy = false) {
       }
 
       const hasProfile =
-        data.includes(`"username":"${username}"`) ||
-        data.includes(`/@${username}`) ||
+        data.includes('"username":"' + username + '"') ||
+        data.includes('/@' + username) ||
         data.includes('"ProfilePage"') ||
-        data.includes(`instagram.com/${username}`);
+        data.includes("instagram.com/" + username);
 
       if (hasProfile) {
         const profile = extractProfileFromHTML(data, username);
-        return { status: STATUS.ACCESSIBLE, detail: "HTTP: profile page found.", profile };
+        return { status: STATUS.ACCESSIBLE, detail: "HTTP: profile page found.", profile: profile };
       }
 
-      // Ambiguous — don't trust it; return ERROR so confirmation stays neutral
       return { status: STATUS.ERROR, detail: "HTTP: ambiguous response (likely soft block).", profile: null };
     }
 
-    return { status: STATUS.BANNED, detail: `HTTP: unexpected status ${httpStatus}.`, profile: null };
+    return { status: STATUS.BANNED, detail: "HTTP: unexpected status " + httpStatus + ".", profile: null };
 
   } catch (err) {
     if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
       return { status: STATUS.ERROR, detail: "HTTP: request timed out.", profile: null };
     }
-    return { status: STATUS.ERROR, detail: `HTTP: ${err.message}`, profile: null };
+    return { status: STATUS.ERROR, detail: "HTTP: " + err.message, profile: null };
   }
 }
 
-// ── Raw check (single attempt, no confirmation logic) ─────────────────────
 async function rawCheck(username) {
   const checkedAt = new Date();
 
-  // 1. RapidAPI
   if (RAPIDAPI_KEY) {
     const result = await checkViaRapidAPI(username);
     if (result && result.status !== STATUS.ERROR) {
-      return { ...result, checkedAt, method: "RapidAPI" };
+      return Object.assign({}, result, { checkedAt: checkedAt, method: "RapidAPI" });
     }
   }
 
-  // 2. Residential proxy
   if (PROXY_URL) {
     const result = await checkViaHTTP(username, true);
     if (result && result.status !== STATUS.ERROR) {
-      return { ...result, checkedAt, method: "Proxy" };
+      return Object.assign({}, result, { checkedAt: checkedAt, method: "Proxy" });
     }
   }
 
-  // 3. Direct scrape (fallback)
   const result = await checkViaHTTP(username, false);
-  return { ...(result || { status: STATUS.ERROR, detail: "All methods failed.", profile: null }), checkedAt, method: "Direct" };
+  return Object.assign({}, result || { status: STATUS.ERROR, detail: "All methods failed.", profile: null }, { checkedAt: checkedAt, method: "Direct" });
 }
 
-// ── Public checkAccount (with confirmation) ───────────────────────────────
-/**
- * Returns a result. The `confirmed` field tells you whether the
- * status has been seen CONFIRMATION_NEEDED times in a row.
- *
- * bot.js should only act on state changes when confirmed === true.
- *
- * @param {string} username
- * @param {string|null} knownStatus — the current confirmed status from DB
- * @returns {{ status, checkedAt, detail, profile, confirmed, method }}
- */
-async function checkAccount(username, knownStatus = null) {
+async function checkAccount(username, knownStatus) {
+  if (knownStatus === undefined) knownStatus = null;
   const raw = await rawCheck(username);
 
-  // RATE_LIMITED and ERROR don't count toward confirmation either way — reset
   if (raw.status === STATUS.RATE_LIMITED || raw.status === STATUS.ERROR) {
-    // Clear any in-progress confirmation to avoid false positives
     delete confirmationTracker[username];
-    return { ...raw, confirmed: false };
+    return Object.assign({}, raw, { confirmed: false });
   }
 
   const tracker = confirmationTracker[username] || { pendingStatus: null, count: 0, lastProfile: null };
 
   if (raw.status === knownStatus) {
-    // Status hasn't changed from known — reset tracker, nothing to confirm
     confirmationTracker[username] = { pendingStatus: null, count: 0, lastProfile: null };
-    return { ...raw, confirmed: false }; // no change
+    return Object.assign({}, raw, { confirmed: false });
   }
 
-  // Status differs from knownStatus — start/continue confirmation
   if (tracker.pendingStatus === raw.status) {
     tracker.count++;
     tracker.lastProfile = raw.profile || tracker.lastProfile;
   } else {
-    // Different pending status (or first time) — restart the counter
     tracker.pendingStatus = raw.status;
     tracker.count = 1;
     tracker.lastProfile = raw.profile || null;
@@ -339,22 +298,17 @@ async function checkAccount(username, knownStatus = null) {
   const confirmed = tracker.count >= CONFIRMATION_NEEDED;
 
   if (confirmed) {
-    // Clean up tracker after confirmation
     delete confirmationTracker[username];
   }
 
-  return {
-    ...raw,
+  return Object.assign({}, raw, {
     profile: tracker.lastProfile,
-    confirmed,
+    confirmed: confirmed,
     confirmCount: tracker.count,
     confirmNeeded: CONFIRMATION_NEEDED,
-  };
+  });
 }
 
-/**
- * One-shot check with NO confirmation (used for /monitor status command).
- */
 async function checkAccountOnce(username) {
   return rawCheck(username);
 }
