@@ -16,7 +16,7 @@ const axios = require("axios");
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const RAPIDAPI_KEY  = process.env.RAPIDAPI_KEY  || null;
-const RAPIDAPI_HOST = "instagram-scraper-stable.p.rapidapi.com";
+const RAPIDAPI_HOST = "instagram-scraper-stable-api.p.rapidapi.com";
 const PROXY_URL     = process.env.PROXY_URL     || null;  // e.g. http://user:pass@host:port
 
 // How many consecutive identical results before we trust a status change.
@@ -138,9 +138,9 @@ async function checkViaRapidAPI(username) {
 
   try {
     const resp = await axios.get(
-      `https://${RAPIDAPI_HOST}/v1/user`,
+      `https://${RAPIDAPI_HOST}/ig_get_fb_profile_hover.php',
       {
-        params: { username_or_id_or_url: username },
+        params: { username: username },
         headers: {
           "X-RapidAPI-Key":  RAPIDAPI_KEY,
           "X-RapidAPI-Host": RAPIDAPI_HOST,
@@ -163,17 +163,17 @@ async function checkViaRapidAPI(username) {
     }
 
     // Some APIs return a top-level `data` key
-    const user = data?.data || data;
+    const user = data?.user || data?.data || data;
 
-    if (httpStatus === 200 && user?.username) {
-      const profile = {
-        followers:    user.follower_count    ?? user.edge_followed_by?.count ?? null,
-        following:    user.following_count   ?? user.edge_follow?.count      ?? null,
-        posts:        user.media_count       ?? null,
-        displayName:  user.full_name         || null,
-        profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || null,
-        isPrivate:    user.is_private        ?? false,
-      };
+if (httpStatus === 200 && (user?.username || user?.id)) {
+  const profile = {
+    followers:    user.follower_count    ?? user.edge_followed_by?.count ?? null,
+    following:    user.following_count   ?? user.edge_follow?.count      ?? null,
+    posts:        user.media_count       ?? user.timeline_media_count    ?? null,
+    displayName:  user.full_name         || null,
+    profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || null,
+    isPrivate:    user.is_private        ?? false,
+  };
       return { status: STATUS.ACCESSIBLE, detail: "RapidAPI: profile accessible.", profile };
     }
 
