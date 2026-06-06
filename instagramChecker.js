@@ -134,7 +134,8 @@ async function checkViaRapidAPI(username) {
     );
 
     const httpStatus = resp.status;
-    const data = resp.data;
+const data = resp.data;
+console.log("[RapidAPI DEBUG]", httpStatus, JSON.stringify(data).slice(0, 500));
 
     if (httpStatus === 429) {
       return { status: STATUS.RATE_LIMITED, detail: "RapidAPI quota reached.", profile: null };
