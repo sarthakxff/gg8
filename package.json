@@ -1,0 +1,20 @@
+{
+  "name": "instagram-monitor-bot",
+  "version": "6.0.0",
+  "description": "Discord bot that monitors Instagram accounts for bans and recoveries",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "https-proxy-agent": "^7.0.4"
+  },
+  "keywords": ["discord", "bot", "instagram", "monitor"],
+  "license": "MIT"
+}
