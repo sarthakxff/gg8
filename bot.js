@@ -26,6 +26,7 @@ require("dotenv").config();
 const {
   Client, GatewayIntentBits, REST, Routes,
   SlashCommandBuilder, EmbedBuilder, Events,
+  MessageFlags,
 } = require("discord.js");
 
 const { monitoringBase, oldClients, permissions, MAX_ACTIVE } = require("./store");
