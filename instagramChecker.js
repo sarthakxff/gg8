@@ -138,7 +138,8 @@ async function checkViaRapidAPI(username) {
 
   try {
     const resp = await axios.get(
-      `https://${RAPIDAPI_HOST}/ig_get_fb_profile_hover.php',
+      const resp = await axios.get(
+      `https://${RAPIDAPI_HOST}/ig_get_fb_profile_hover.php`,
       {
         params: { username: username },
         headers: {
