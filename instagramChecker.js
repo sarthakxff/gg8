@@ -138,7 +138,7 @@ async function checkViaRapidAPI(username) {
 
   try {
     const resp = await axios.get(
-      `https://${RAPIDAPI_HOST}/v1/info`,
+      `https://${RAPIDAPI_HOST}/v1/user`,
       {
         params: { username_or_id_or_url: username },
         headers: {
