@@ -16,7 +16,7 @@ const axios = require("axios");
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const RAPIDAPI_KEY  = process.env.RAPIDAPI_KEY  || null;
-const RAPIDAPI_HOST = "instagram-scraper-api2.p.rapidapi.com";
+const RAPIDAPI_HOST = "instagram-scraper-stable.p.rapidapi.com";
 const PROXY_URL     = process.env.PROXY_URL     || null;  // e.g. http://user:pass@host:port
 
 // How many consecutive identical results before we trust a status change.
