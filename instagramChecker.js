@@ -14,7 +14,7 @@ const HIKERAPI_KEY  = process.env.RAPIDAPI_KEY  || null;  // reuse same env var
 const HIKERAPI_BASE = "https://api.hikerapi.com";
 const PROXY_URL     = process.env.PROXY_URL     || null;
 
-const CONFIRMATION_NEEDED = 2;
+const CONFIRMATION_NEEDED = 1;
 
 const STATUS = {
   BANNED:       "BANNED",
