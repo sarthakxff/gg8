@@ -321,11 +321,10 @@ async function scheduleCheck(username, initialDelayMs = 0) {
       return;
     }
 
-    // Success — reset backoff
+   // Success — reset backoff
 backoffTimers[username] = BASE_INTERVAL_MS;
 
-// Only update lastStatus after CONFIRMED change — not during confirmation
-// Otherwise the tracker resets because knownStatus matches the new status
+// Only update lastStatus after CONFIRMED change
 if (result.confirmed) {
   updates.lastStatus = result.status;
 }
