@@ -1,8 +1,8 @@
 /**
- * instagramChecker.js — v6
+ * instagramChecker.js — v6 (HikerAPI edition)
  *
  * Strategy (in order of priority):
- *   1. RapidAPI  → Most reliable from datacenter IPs (Railway).
+ *   1. HikerAPI  → Most reliable from datacenter IPs (Railway).
  *   2. HTML scrape via residential proxy (PROXY_URL) if set.
  *   3. Direct HTML scrape fallback (last resort, often blocked on Railway).
  */
@@ -10,8 +10,8 @@
 const axios = require("axios");
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const RAPIDAPI_KEY  = process.env.RAPIDAPI_KEY  || null;
-const RAPIDAPI_HOST = "instagram-scraper-stable-api.p.rapidapi.com";
+const HIKERAPI_KEY  = process.env.RAPIDAPI_KEY  || null;  // reuse same env var
+const HIKERAPI_BASE = "https://api.hikerapi.com";
 const PROXY_URL     = process.env.PROXY_URL     || null;
 
 const CONFIRMATION_NEEDED = 2;
@@ -65,7 +65,9 @@ function extractProfileFromHTML(html, username) {
     const sharedMatch = html.match(/window\._sharedData\s*=\s*(\{.+?\});<\/script>/s);
     if (sharedMatch) {
       const json = JSON.parse(sharedMatch[1]);
-      const user = json && json.entry_data && json.entry_data.ProfilePage && json.entry_data.ProfilePage[0] && json.entry_data.ProfilePage[0].graphql && json.entry_data.ProfilePage[0].graphql.user;
+      const user = json && json.entry_data && json.entry_data.ProfilePage &&
+                   json.entry_data.ProfilePage[0] && json.entry_data.ProfilePage[0].graphql &&
+                   json.entry_data.ProfilePage[0].graphql.user;
       if (user) {
         stats.followers    = user.edge_followed_by ? user.edge_followed_by.count : null;
         stats.following    = user.edge_follow ? user.edge_follow.count : null;
@@ -116,17 +118,18 @@ function extractProfileFromHTML(html, username) {
   return stats;
 }
 
-async function checkViaRapidAPI(username) {
-  if (!RAPIDAPI_KEY) return null;
+// ── HikerAPI check ────────────────────────────────────────────────────────
+async function checkViaHikerAPI(username) {
+  if (!HIKERAPI_KEY) return null;
 
   try {
     const resp = await axios.get(
-      "https://" + RAPIDAPI_HOST + "/ig_get_fb_profile_hover.php",
+      HIKERAPI_BASE + "/v1/user/by/username",
       {
         params: { username: username },
         headers: {
-          "X-RapidAPI-Key":  RAPIDAPI_KEY,
-          "X-RapidAPI-Host": RAPIDAPI_HOST,
+          "x-access-key": HIKERAPI_KEY,
+          "accept": "application/json",
         },
         timeout: 15000,
         validateStatus: function() { return true; },
@@ -134,41 +137,44 @@ async function checkViaRapidAPI(username) {
     );
 
     const httpStatus = resp.status;
-const data = resp.data;
-console.log("[RapidAPI DEBUG]", httpStatus, JSON.stringify(data).slice(0, 500));
+    const data = resp.data;
+
+    console.log("[HikerAPI DEBUG]", httpStatus, JSON.stringify(data).slice(0, 300));
 
     if (httpStatus === 429) {
-      return { status: STATUS.RATE_LIMITED, detail: "RapidAPI quota reached.", profile: null };
+      return { status: STATUS.RATE_LIMITED, detail: "HikerAPI quota reached.", profile: null };
     }
 
+    // 404 = account not found / banned
     if (httpStatus === 404) {
-      return { status: STATUS.ERROR, detail: "RapidAPI: account not found (may be API error).", profile: null };
+      return { status: STATUS.BANNED, detail: "HikerAPI: account not found (404).", profile: null };
     }
 
-    const user = (data && data.user) || (data && data.data) || data;
-
-    if (httpStatus === 200 && user && (user.username || user.id)) {
+    // 200 with valid user data
+    if (httpStatus === 200 && data && (data.username || data.pk)) {
       const profile = {
-        followers:    user.follower_count    || (user.edge_followed_by && user.edge_followed_by.count) || null,
-        following:    user.following_count   || (user.edge_follow && user.edge_follow.count) || null,
-        posts:        user.media_count       || user.timeline_media_count || null,
-        displayName:  user.full_name         || null,
-        profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || null,
-        isPrivate:    user.is_private        || false,
+        followers:    data.follower_count    || null,
+        following:    data.following_count   || null,
+        posts:        data.media_count       || null,
+        displayName:  data.full_name         || null,
+        profilePicUrl: data.profile_pic_url_hd || data.profile_pic_url || null,
+        isPrivate:    data.is_private        || false,
       };
-      return { status: STATUS.ACCESSIBLE, detail: "RapidAPI: profile accessible.", profile: profile };
+      return { status: STATUS.ACCESSIBLE, detail: "HikerAPI: profile accessible.", profile: profile };
     }
 
-    return { status: STATUS.BANNED, detail: "RapidAPI: HTTP " + httpStatus + ".", profile: null };
+    // Any other status
+    return { status: STATUS.ERROR, detail: "HikerAPI: HTTP " + httpStatus + ".", profile: null };
 
   } catch (err) {
     if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
-      return { status: STATUS.ERROR, detail: "RapidAPI: request timed out.", profile: null };
+      return { status: STATUS.ERROR, detail: "HikerAPI: request timed out.", profile: null };
     }
     return null;
   }
 }
 
+// ── HTML scrape (direct or via proxy) ─────────────────────────────────────
 async function checkViaHTTP(username, useProxy) {
   if (useProxy === undefined) useProxy = false;
   const url = "https://www.instagram.com/" + username + "/";
@@ -248,16 +254,19 @@ async function checkViaHTTP(username, useProxy) {
   }
 }
 
+// ── Raw check (single attempt, no confirmation logic) ─────────────────────
 async function rawCheck(username) {
   const checkedAt = new Date();
 
-  if (RAPIDAPI_KEY) {
-    const result = await checkViaRapidAPI(username);
+  // 1. HikerAPI
+  if (HIKERAPI_KEY) {
+    const result = await checkViaHikerAPI(username);
     if (result && result.status !== STATUS.ERROR) {
-      return Object.assign({}, result, { checkedAt: checkedAt, method: "RapidAPI" });
+      return Object.assign({}, result, { checkedAt: checkedAt, method: "HikerAPI" });
     }
   }
 
+  // 2. Residential proxy
   if (PROXY_URL) {
     const result = await checkViaHTTP(username, true);
     if (result && result.status !== STATUS.ERROR) {
@@ -265,10 +274,12 @@ async function rawCheck(username) {
     }
   }
 
+  // 3. Direct scrape (fallback)
   const result = await checkViaHTTP(username, false);
   return Object.assign({}, result || { status: STATUS.ERROR, detail: "All methods failed.", profile: null }, { checkedAt: checkedAt, method: "Direct" });
 }
 
+// ── Public checkAccount (with confirmation) ───────────────────────────────
 async function checkAccount(username, knownStatus) {
   if (knownStatus === undefined) knownStatus = null;
   const raw = await rawCheck(username);
