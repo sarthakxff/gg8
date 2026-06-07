@@ -216,8 +216,8 @@ async function notifyAccountBanned(username, account) {
 
 // ── Notification: UNBANNED ────────────────────────────────────────────────
 async function notifyAccountUnbanned(username, account, freshProfile) {
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-  if (!channel) return;
+  const channel = await client.channels.fetch(CHANNEL_ID).catch((err) => { console.error("❌ Channel fetch failed:", err.message); return null; });
+if (!channel) { console.error("❌ Channel not found! Check DISCORD_CHANNEL_ID in Railway variables."); return; }
 
   const now        = Date.now();
   const timeTaken  = account.addedAt ? formatDuration(now - new Date(account.addedAt).getTime()) : "unknown";
@@ -243,7 +243,9 @@ async function notifyAccountUnbanned(username, account, freshProfile) {
     .setFooter({ text: "Instagram Monitor • Archived to Old Clients automatically" })
     .setTimestamp();
 
-  await channel.send({ content: pings, embeds: [embed], allowedMentions: { users: mentionIds } });
+  await channel.send({ content: pings, embeds: [embed], allowedMentions: { users: mentionIds } })
+  .then(() => console.log(`✅ Unban notification sent for @${username}`))
+  .catch((err) => console.error(`❌ NOTIFICATION FAILED for @${username}:`, err.message));
 
   await adminLog({
     type: "ALERT", title: `@${username} — UNBANNED / RECOVERED`, color: 0x00ff88,
