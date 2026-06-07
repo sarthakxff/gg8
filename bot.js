@@ -322,14 +322,17 @@ async function scheduleCheck(username, initialDelayMs = 0) {
     }
 
     // Success — reset backoff
-    backoffTimers[username] = BASE_INTERVAL_MS;
+backoffTimers[username] = BASE_INTERVAL_MS;
 
-    // Update status + cache profile if accessible
-    updates.lastStatus = result.status;
-    if (result.status === STATUS.ACCESSIBLE && result.profile) {
-      updates.cachedProfile = result.profile;
-    }
-    monitoringBase.update(username, updates);
+// Only update lastStatus after CONFIRMED change — not during confirmation
+// Otherwise the tracker resets because knownStatus matches the new status
+if (result.confirmed) {
+  updates.lastStatus = result.status;
+}
+if (result.status === STATUS.ACCESSIBLE && result.profile) {
+  updates.cachedProfile = result.profile;
+}
+monitoringBase.update(username, updates);
 
     const methodTag = result.method ? ` [${result.method}]` : "";
 
