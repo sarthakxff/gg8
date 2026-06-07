@@ -197,7 +197,9 @@ async function notifyAccountBanned(username, account) {
     .setFooter({ text: "Instagram Monitor • Archived to Old Clients automatically" })
     .setTimestamp();
 
-  await channel.send({ content: pings, embeds: [embed], allowedMentions: { users: mentionIds } });
+  await channel.send({ content: pings, embeds: [embed], allowedMentions: { users: mentionIds } })
+  .then(() => console.log(`✅ Notification sent for @${username}`))
+  .catch((err) => console.error(`❌ Failed to send notification for @${username}:`, err.message));
 
   await adminLog({
     type: "ALERT", title: `@${username} — BANNED`, color: 0xff2200,
